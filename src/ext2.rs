@@ -10,7 +10,7 @@ use crate::ext2;
 pub struct Ext2FS {
 	super_block: Superblock,
     // The block group descriptor table is an array of block group descriptor, used to define parameters of all the block groups.
-    // block_group_descriptors: Vec<BlockGroupDescriptor>,
+    block_group_descriptors: Vec<BlockGroupDescriptor>,
 }
 
 pub struct BlockIter {
@@ -75,6 +75,7 @@ impl Superblock {
         self.block_size
     }
 
+    fn blocks_per_group(&self) -> u32 { self.blocks_per_group }
     fn rev_level(&self) -> u32 {
         self.rev_level
     }
@@ -118,6 +119,7 @@ impl Ext2FS {
         println!("Inodes Count: {}", superblock.inodes_count());
         println!("Blocks Count: {}", superblock.blocks_count());
         println!("Block Size: {} bytes", superblock.block_size());
+        println!("Blocks per group: {}", superblock.blocks_per_group());
         println!("Revision Level: {}", superblock.rev_level());
 
         // Get BlockGroupDescriptor
@@ -125,26 +127,38 @@ impl Ext2FS {
         // The block group descriptor table starts on the first block following the superblock.
         // This would be the third block on a 1KiB block file system, or the second block for 2KiB and larger block file systems.
         let descriptor_table_offset = if block_size > 1024 {
-            block_size // Descriptor table is in block 1 if block size > 1024
+            2 * block_size // Descriptor table is in block 2 if block size > 1024
         } else {
-            1024 + block_size // Otherwise, it's in block 2
+            3 * block_size // Otherwise, it's in block 3
         };
-        println!("block_size: {}", block_size);
 
 		println!("Descriptor Table Offset: {}", descriptor_table_offset);
         // Depending on how many block groups are defined, this table can require multiple blocks of storage. Always refer to the superblock in case of doubt.
         // Calculate the number of block groups
-        let blocks_per_group = superblock.blocks_count / superblock.blocks_per_group;
+        let blocks_per_group = superblock.blocks_count() / superblock.blocks_per_group();
         // Each Block Group Descriptor is 32 bytes in size.
         let mut buffer = vec![0u8; 32 * blocks_per_group as usize];
+
+        println!("blocks_per_group: {}", superblock.blocks_count());
 
         // Read the Block Group Descriptor Table
         _device.seek(SeekFrom::Start(descriptor_table_offset as u64))?;
         _device.read_exact(&mut buffer)?;
 
+        let mut block_group_descriptors: Vec<BlockGroupDescriptor> = vec![];
+
+        // Parse each Block Group Descriptor
+        for i in 0..blocks_per_group {
+            let start = (i as usize) * 32;
+            let end = start + 32;
+            let descriptor = BlockGroupDescriptor::new(&buffer[start..end]);
+            block_group_descriptors.push(descriptor);
+        }
+
 		Ok(
             Ext2FS {
                 super_block: superblock,
+                block_group_descriptors
 		}
         )
 	}

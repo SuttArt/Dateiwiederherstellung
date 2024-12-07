@@ -6,15 +6,16 @@ use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug)]
 pub struct Ext2FS {
-    super_block: Superblock,
+    pub super_block: Superblock,
     // The block group descriptor table is an array of block group descriptor, used to define parameters of all the block groups.
+    #[allow(dead_code)]
     block_group_descriptors: Vec<BlockGroupDescriptor>,
     block_bitmaps: Vec<Vec<u8>>, // A vector of block bitmaps for each block group
     data_blocks_offsets: Vec<u32>,
 }
 
-pub struct BlockIter {
-    ext2_fs: Ext2FS,
+pub struct BlockIter<'a> {
+    ext2_fs: &'a Ext2FS,
     current_group: usize,
     current_byte: usize,
     current_bit: usize,
@@ -23,7 +24,7 @@ pub struct BlockIter {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
-struct Superblock {
+pub struct Superblock {
     inodes_count: u32,
     blocks_count: u32,
     block_size: u32,
@@ -81,7 +82,7 @@ impl Superblock {
         self.blocks_count
     }
 
-    fn block_size(&self) -> u32 {
+    pub fn block_size(&self) -> u32 {
         self.block_size
     }
 
@@ -275,8 +276,8 @@ impl Ext2FS {
     }
 }
 
-impl BlockIter {
-    pub fn new(ext2_fs: Ext2FS) -> Self {
+impl<'a> BlockIter<'a> {
+    pub fn new(ext2_fs: &'a Ext2FS) -> Self {
         BlockIter {
             ext2_fs,
             current_group: 0,
@@ -286,7 +287,7 @@ impl BlockIter {
         }
     }
 }
-impl Iterator for BlockIter {
+impl Iterator for BlockIter<'_> {
     type Item = (usize, usize, bool); // (Group Number, Block Number, Is Used)
 
     fn next(&mut self) -> Option<Self::Item> {

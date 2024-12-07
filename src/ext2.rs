@@ -14,7 +14,11 @@ pub struct Ext2FS {
 }
 
 pub struct BlockIter {
-    // TODO: fill this structure
+    ext2_fs: Ext2FS,
+    current_group: usize,
+    current_byte: usize,
+    current_bit: usize,
+    block_number: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -271,11 +275,77 @@ impl Ext2FS {
     }
 }
 
+impl BlockIter {
+    pub fn new(ext2_fs: Ext2FS) -> Self {
+        BlockIter {
+            ext2_fs,
+            current_group: 0,
+            current_byte: 0,
+            current_bit: 0,
+            block_number: 0
+        }
+    }
+}
 impl Iterator for BlockIter {
-    type Item = ();
+    type Item = (usize, usize, bool); // (Group Number, Block Number, Is Used)
 
-    fn next(&mut self) -> Option<()> {
-        // TODO: implement an iterator over unused blocks
+    fn next(&mut self) -> Option<Self::Item> {
+        // Check every group in block_bitmaps, we need every unused block
+        while self.current_group < self.ext2_fs.block_bitmaps.len() {
+            // Extract group from vector
+            let group_bitmap = &self.ext2_fs.block_bitmaps[self.current_group];
+            // We can skip block, what are used for metadata:
+            // superblock;
+            // block group descriptor table;
+            // block bitmap;
+            // inode bitmap;
+            // inode table;
+            // We need -> data blocks
+            let blocks_to_skip = self.ext2_fs.data_blocks_offsets[self.current_group];
+
+            // Check every byte in group
+            while self.current_byte < group_bitmap.len() {
+                // Extract byte from vector
+                let group_byte = group_bitmap[self.current_byte];
+
+                // Extract every bit from byte
+                while self.current_bit < 8 {
+                    // Calculate current block number
+                    let current_block_number = self.block_number + 1;
+
+
+                    // Skip blocks with metadata
+                    if current_block_number <= blocks_to_skip as usize {
+                        self.block_number += 1;
+                        self.current_bit += 1;
+                        continue;
+                    }
+
+                    // Extract the bit at current_bit
+                    let bit = (group_byte >> self.current_bit) & 1;
+
+
+                    // Next bit
+                    self.block_number += 1;
+                    self.current_bit += 1;
+
+                    // Return the current block info
+                    return Some((
+                        self.current_group + 1,    // Block group number (1-based)
+                        current_block_number,     // Block number
+                        bit == 1,                 // Is Used
+                        ));
+                }
+
+                // Next byte
+                self.current_bit = 0;
+                self.current_byte += 1;
+            }
+
+            // Next group
+            self.current_byte = 0;
+            self.current_group += 1;
+        }
         None
     }
 }

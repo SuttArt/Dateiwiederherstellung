@@ -7,7 +7,20 @@ fn recover_files(_device: fs::File, _path: &str) -> io::Result<()> {
 	// TODO: read superblock, iterate over unused blocks, find jpg start and end patterns, copy data
 
 	// read superblock, BlockGroupDescriptor, some usefully data
-	let _ext2_fs = ext2::Ext2FS::new(_device)?;
+	let ext2_fs = ext2::Ext2FS::new(_device)?;
+
+	// iterate over unused blocks
+	let block_iter = ext2::BlockIter::new(ext2_fs);
+
+	// Use the iterator to process blocks
+	for (group_number, block_number, is_used) in block_iter {
+		println!(
+			"Block Group {}, Block {}: {}",
+			group_number,
+			block_number,
+			if is_used { "Used" } else { "Free" }
+		);
+	}
 
 	Ok(())
 }

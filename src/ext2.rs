@@ -10,6 +10,8 @@ pub struct Ext2FS {
     super_block: Superblock,
     // The block group descriptor table is an array of block group descriptor, used to define parameters of all the block groups.
     block_group_descriptors: Vec<BlockGroupDescriptor>,
+    block_bitmaps: Vec<Vec<u8>>, // A vector of block bitmaps for each block group
+    data_blocks_offsets: Vec<u32>,
 }
 
 pub struct BlockIter {
@@ -23,7 +25,9 @@ struct Superblock {
     blocks_count: u32,
     block_size: u32,
     blocks_per_group: u32,
+    inodes_per_group: u32,
     rev_level: u32,
+    inode_size: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,7 +50,9 @@ impl Superblock {
         let blocks_count = u32::from_le_bytes(block[4..8].try_into().unwrap());
         let log_block_size = u32::from_le_bytes(block[24..28].try_into().unwrap());
         let blocks_per_group = u32::from_le_bytes(block[32..36].try_into().unwrap());
+        let inodes_per_group = u32::from_le_bytes(block[40..44].try_into().unwrap());
         let rev_level = u32::from_le_bytes(block[76..80].try_into().unwrap());
+        let inode_size = u16::from_le_bytes(block[88..90].try_into().unwrap());
 
         // Calculate the block size#
         // The block size is computed using this 32bit value as the number of bits to shift left the value 1024. This value may only be non-negative.
@@ -57,7 +63,9 @@ impl Superblock {
             blocks_count,
             block_size,
             blocks_per_group,
+            inodes_per_group,
             rev_level,
+            inode_size,
         }
     }
 
@@ -75,17 +83,22 @@ impl Superblock {
     }
 
     fn blocks_per_group(&self) -> u32 { self.blocks_per_group }
+    fn inodes_per_group(&self) -> u32 { self.inodes_per_group }
     fn rev_level(&self) -> u32 {
         self.rev_level
     }
+    fn inode_size(&self) -> u16 { self.inode_size }
 
     fn print_parsed_info(&self) {
         // Print the parsed Superblock information
+        println!("\x1b[32mPrint the parsed Superblock information:\x1b[0m");
         println!("Inodes Count: {}", self.inodes_count());
         println!("Blocks Count: {}", self.blocks_count());
         println!("Block Size: {} bytes", self.block_size());
         println!("Blocks per group: {}", self.blocks_per_group());
+        println!("Inodes per group: {}", self.inodes_per_group());
         println!("Revision Level: {}", self.rev_level());
+        println!("Inode size: {}", self.inode_size());
     }
 }
 
@@ -128,8 +141,11 @@ impl BlockGroupDescriptor {
     fn bg_pad(&self) -> u16 { self.bg_pad }
     fn bg_reserved(&self) -> &[u8; 12] { &self.bg_reserved }
 
-    pub fn print_parsed_info(&self) {
+    pub fn print_parsed_info(&self, group_number: usize) {
         // Print the parsed Block Group Descriptor information
+        // green text: "\x1b[32m ... \x1b[0m"
+        println!("\x1b[32mPrint the parsed Block Group Descriptor information:\x1b[0m");
+        println!("Block Group {}:", group_number);
         println!("Block Bitmap Block: {}", self.bg_block_bitmap());
         println!("Inode Bitmap Block: {}", self.bg_inode_bitmap());
         println!("Inode Table Block: {}", self.bg_inode_table());
@@ -176,8 +192,6 @@ impl Ext2FS {
         // Each Block Group Descriptor is 32 bytes in size.
         let mut buffer = vec![0u8; 32 * block_groups_number as usize];
 
-        println!("blocks_per_group: {}", superblock.blocks_count());
-
         // Read the Block Group Descriptor Table
         _device.seek(SeekFrom::Start(descriptor_table_offset as u64))?;
         _device.read_exact(&mut buffer)?;
@@ -198,15 +212,61 @@ impl Ext2FS {
         }
 
         for (i, descriptor) in block_group_descriptors.iter().enumerate() {
-            println!("Block Group {}:", i);
-            descriptor.print_parsed_info();
-            println!();
+            descriptor.print_parsed_info(i);
         }
+
+
+
+        // Calculate the Size of the Block Bitmap
+        // The first block of this block group is represented by bit 0 of byte 0,
+        // the second by bit 1 of byte 0. The 8th block is represented by bit 7 (most significant bit) of byte 0
+        // while the 9th block is represented by bit 0 (least significant bit) of byte 1.
+        // 1 byte = 8 bits, so each byte in the bitmap represents 8 blocks.
+        let block_bitmap_size = superblock.blocks_per_group() / 8;
+
+        let mut block_bitmaps: Vec<Vec<u8>> = Vec::new();
+
+        for (_, descriptor) in block_group_descriptors.iter().enumerate() {
+            let block_bitmap_offset = descriptor.bg_block_bitmap() * block_size;
+
+            // Read the Block Bitmap
+            let mut bitmap_buffer = vec![0u8; block_bitmap_size as usize];
+            _device.seek(SeekFrom::Start(block_bitmap_offset as u64))?;
+            _device.read_exact(&mut bitmap_buffer)?;
+
+            // println!("Loaded Block Bitmap for Block Group {}: {:?}", i, bitmap_buffer);
+            block_bitmaps.push(bitmap_buffer);
+        }
+
+        // green text: "\x1b[32m ... \x1b[0m"
+        println!("\x1b[32mBlock bitmaps length: \x1b[0m{:?}", block_bitmaps.len());
+
+        // We need data_blocks_offsets for each group, to get the data blocks
+        // Inode Table Size (in bytes) = Inodes per Group * Inode Size
+        // Or in blocks:
+        let inode_table_size = superblock.inodes_per_group() / (block_size / superblock.inode_size() as u32);
+
+        let mut data_blocks_offsets = Vec::new();
+
+        for (_, descriptor) in block_group_descriptors.iter().enumerate() {
+            // Calculate the data block start for this group
+            let data_block_offset = inode_table_size + descriptor.bg_inode_table();
+
+            data_blocks_offsets.push(data_block_offset);
+
+        }
+
+        // green text: "\x1b[32m ... \x1b[0m"
+        println!("\x1b[32mData Blocks Offsets length: \x1b[0m{}", data_blocks_offsets.len());
+
+
 
         Ok(
             Ext2FS {
                 super_block: superblock,
                 block_group_descriptors,
+                block_bitmaps,
+                data_blocks_offsets
             }
         )
     }

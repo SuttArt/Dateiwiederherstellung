@@ -1,9 +1,8 @@
 // implementation template for convenience
 // see https://www.nongnu.org/ext2-doc/ext2.html for documentation on ext2 fs
 
-use std::{fs, io, u128};
+use std::{fs, io};
 use std::io::{Read, Seek, SeekFrom};
-use crate::ext2;
 
 #[derive(Debug)]
 pub struct Ext2FS {
@@ -241,7 +240,7 @@ impl Ext2FS {
         // green text: "\x1b[32m ... \x1b[0m"
         println!("\x1b[32mBlock bitmaps length: \x1b[0m{:?}", block_bitmaps.len());
 
-        // We need data_blocks_offsets for each group, to get the data blocks
+        // We need data_blocks_offsets for each group, to get the data blocks, that are located after Inode Table.
         // Inode Table Size (in bytes) = Inodes per Group * Inode Size
         // Or in blocks:
         let inode_table_size = superblock.inodes_per_group() / (block_size / superblock.inode_size() as u32);

@@ -1,12 +1,13 @@
 use std::{io, fs};
-use std::io::{Read, Seek, SeekFrom};
 
 mod ext2;
 
 
 fn recover_files(_device: fs::File, _path: &str) -> io::Result<()> {
+	// TODO: read superblock, iterate over unused blocks, find jpg start and end patterns, copy data
 
-	let ext2_fs = ext2::Ext2FS::new(_device)?;
+	// read superblock, BlockGroupDescriptor, some usefully data
+	let _ext2_fs = ext2::Ext2FS::new(_device)?;
 
 	Ok(())
 }

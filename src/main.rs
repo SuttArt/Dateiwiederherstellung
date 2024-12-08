@@ -91,5 +91,14 @@ fn main() -> io::Result<()> {
 	let target_path = args[2].to_string();
 
 	fs::create_dir_all(&target_path)?;
-	recover_files(fs::File::open(&device_path)?, &target_path)
+	match recover_files(fs::File::open(&device_path)?, &target_path){
+		Ok(_) => {
+			println!("Successfully recovered {}", &device_path);
+			Ok(()) // Return the correct type
+		},
+		Err(e) => {
+			eprintln!("Failed to recover {}: {}", &device_path, e);
+			Err(e) // Return the error
+		},
+	}
 }

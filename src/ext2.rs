@@ -117,6 +117,7 @@ impl Superblock {
     }
     fn inode_size(&self) -> u16 { self.inode_size }
 
+    #[allow(dead_code)]
     fn print_parsed_info(&self) {
         // Print the parsed Superblock information
         println!("\x1b[32mPrint the parsed Superblock information:\x1b[0m");
@@ -188,7 +189,7 @@ impl BlockGroupDescriptor {
     fn bg_used_dirs_count(&self) -> u16 { self.bg_used_dirs_count }
     fn bg_pad(&self) -> u16 { self.bg_pad }
     fn bg_reserved(&self) -> &[u8; 12] { &self.bg_reserved }
-
+    #[allow(dead_code)]
     pub fn print_parsed_info(&self, group_number: usize) {
         // Print the parsed Block Group Descriptor information
         // green text: "\x1b[32m ... \x1b[0m"
@@ -300,7 +301,7 @@ impl Inode {
     fn i_dir_acl(&self) -> u32 { self.i_dir_acl}
     fn i_faddr(&self) -> u32 { self.i_faddr}
     fn i_osd2(&self) -> [u8; 12] { self.i_osd2}
-
+    #[allow(dead_code)]
     fn print_parsed_info(&self) {
         println!("\x1b[32mParsed Inode Information:\x1b[0m");
         println!("Mode: {:#o}", self.i_mode());

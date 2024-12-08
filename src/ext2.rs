@@ -379,7 +379,8 @@ impl Ext2FS {
         _device.read_exact(&mut buffer)?;
         let superblock = Superblock::new(&buffer);
 
-        superblock.print_parsed_info();
+        // For debug
+        // superblock.print_parsed_info();
 
         // Get BlockGroupDescriptor
         let block_size = superblock.block_size();
@@ -391,7 +392,6 @@ impl Ext2FS {
             2 * block_size // Otherwise, it's in block 3
         };
 
-        println!("Descriptor Table Offset: {}", descriptor_table_offset);
         // Depending on how many block groups are defined, this table can require multiple blocks of storage. Always refer to the superblock in case of doubt.
         // Calculate the number of block groups
 
@@ -423,9 +423,10 @@ impl Ext2FS {
             }
         }
 
-        for (i, descriptor) in block_group_descriptors.iter().enumerate() {
-            descriptor.print_parsed_info(i);
-        }
+        // for debug
+        // for (i, descriptor) in block_group_descriptors.iter().enumerate() {
+        //     descriptor.print_parsed_info(i);
+        // }
 
 
 
@@ -450,8 +451,9 @@ impl Ext2FS {
             block_bitmaps.push(bitmap_buffer);
         }
 
+        // for debug
         // green text: "\x1b[32m ... \x1b[0m"
-        println!("\x1b[32mBlock bitmaps length: \x1b[0m{:?}", block_bitmaps.len());
+        // println!("\x1b[32mBlock bitmaps length: \x1b[0m{:?}", block_bitmaps.len());
 
         // We need data_blocks_offsets for each group, to get the data blocks, that are located after Inode Table.
         // Inode Table Size (in bytes) = Inodes per Group * Inode Size
@@ -468,8 +470,9 @@ impl Ext2FS {
 
         }
 
+        // for debug
         // green text: "\x1b[32m ... \x1b[0m"
-        println!("\x1b[32mData Blocks Offsets length: \x1b[0m{}", data_blocks_offsets.len());
+        // println!("\x1b[32mData Blocks Offsets length: \x1b[0m{}", data_blocks_offsets.len());
 
         // Save Inode Table
         let mut inode_table: Vec<Inode> = vec![];
@@ -492,11 +495,13 @@ impl Ext2FS {
             }
         }
 
-        println!("inode table len: {}", inode_table.len());
+        // for debug
+        // println!("inode table len: {}", inode_table.len());
 
-        for (_, inode) in inode_table.iter().enumerate() {
-            inode.print_parsed_info();
-        }
+        // for debug
+        // for (_, inode) in inode_table.iter().enumerate() {
+        //     inode.print_parsed_info();
+        // }
 
         Ok(
             Ext2FS {

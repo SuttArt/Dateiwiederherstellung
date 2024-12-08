@@ -2,7 +2,8 @@
 // see https://www.nongnu.org/ext2-doc/ext2.html for documentation on ext2 fs
 
 use std::{fs, io};
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 #[derive(Debug)]
 pub struct Ext2FS {
@@ -10,6 +11,7 @@ pub struct Ext2FS {
     // The block group descriptor table is an array of block group descriptor, used to define parameters of all the block groups.
     #[allow(dead_code)]
     block_group_descriptors: Vec<BlockGroupDescriptor>,
+    inode_table: Vec<Inode>,
     block_bitmaps: Vec<Vec<u8>>, // A vector of block bitmaps for each block group
     data_blocks_offsets: Vec<u32>,
 }
@@ -25,28 +27,50 @@ pub struct BlockIter<'a> {
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct Superblock {
-    inodes_count: u32,
-    blocks_count: u32,
-    block_size: u32,
-    blocks_per_group: u32,
-    inodes_per_group: u32,
-    rev_level: u32,
-    inode_size: u16,
+    inodes_count: u32,        // Total number of inodes
+    blocks_count: u32,        // Total number of blocks
+    block_size: u32,          // Block size
+    blocks_per_group: u32,    // Number of blocks per group
+    inodes_per_group: u32,    // Number of inodes per group
+    rev_level: u32,           // Revision level
+    inode_size: u16,          // Size of inode structure
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 struct BlockGroupDescriptor {
-    bg_block_bitmap: u32,
-    bg_inode_bitmap: u32,
-    bg_inode_table: u32,
-    bg_free_blocks_count: u16,
-    bg_free_inodes_count: u16,
-    bg_used_dirs_count: u16,
-    bg_pad: u16,
-    bg_reserved: [u8; 12],
+    bg_block_bitmap: u32,      // Block ID of the block bitmap
+    bg_inode_bitmap: u32,      // Block ID of the inode bitmap
+    bg_inode_table: u32,       // Starting block ID of the inode table
+    bg_free_blocks_count: u16, // Number of free blocks in the group
+    bg_free_inodes_count: u16, // Number of free inodes in the group
+    bg_used_dirs_count: u16,   // Number of used directories in the group
+    bg_pad: u16,               // Padding to align the structure
+    bg_reserved: [u8; 12],     // Reserved space for future use
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+struct Inode {
+    i_mode: u16,              // File mode (type and permissions)
+    i_uid: u16,               // User ID of owner
+    i_size: u32,              // Size of file in bytes
+    i_atime: u32,             // Access time (UNIX timestamp)
+    i_ctime: u32,             // Creation time (UNIX timestamp)
+    i_mtime: u32,             // Modification time (UNIX timestamp)
+    i_dtime: u32,             // Deletion time (UNIX timestamp)
+    i_gid: u16,               // Group ID of owner
+    i_links_count: u16,       // Hard link count
+    i_blocks: u32,            // Number of 512-byte blocks allocated
+    i_flags: u32,             // File flags
+    i_osd1: u32,              // OS-dependent value
+    i_block: [u32; 15],       // Pointers to data blocks
+    i_generation: u32,        // File version (for NFS)
+    i_file_acl: u32,          // File ACL (Access Control List)
+    i_dir_acl: u32,           // Directory ACL or file size high bits
+    i_faddr: u32,             // Fragment address
+    i_osd2: [u8; 12],         // OS-dependent value
+}
 impl Superblock {
     fn new(block: &[u8]) -> Self {
         // Parse relevant fields from the Superblock
@@ -104,6 +128,26 @@ impl Superblock {
         println!("Revision Level: {}", self.rev_level());
         println!("Inode size: {}", self.inode_size());
     }
+
+    pub fn get_all_info(&self) -> String {
+        format!(
+            "Superblock Information:\n\
+            Inodes Count: {}\n\
+            Blocks Count: {}\n\
+            Block Size: {} bytes\n\
+            Blocks per Group: {}\n\
+            Inodes per Group: {}\n\
+            Revision Level: {}\n\
+            Inode Size: {} bytes\n",
+            self.inodes_count(),
+            self.blocks_count(),
+            self.block_size(),
+            self.blocks_per_group(),
+            self.inodes_per_group(),
+            self.rev_level(),
+            self.inode_size(),
+        )
+    }
 }
 
 impl BlockGroupDescriptor {
@@ -159,6 +203,170 @@ impl BlockGroupDescriptor {
         println!("Padding: {}", self.bg_pad());
         println!("Reserved: {:?}", self.bg_reserved()); // Print reserved as a byte array
     }
+    pub fn get_all_info(&self, group_number: usize) -> String {
+        format!(
+            "Block Group Descriptor Information:\n\
+            Block Group: {}\n\
+            Block Bitmap: {}\n\
+            Inode Bitmap: {}\n\
+            Inode Table: {}\n\
+            Free Blocks Count: {}\n\
+            Free Inodes Count: {}\n\
+            Used Directories Count: {}\n\
+            Padding: {}\n\
+            Reserved: {:?}\n\
+            \n\n\n",
+            group_number,
+            self.bg_block_bitmap(),
+            self.bg_inode_bitmap(),
+            self.bg_inode_table(),
+            self.bg_free_blocks_count(),
+            self.bg_free_inodes_count(),
+            self.bg_used_dirs_count(),
+            self.bg_pad(),
+            self.bg_reserved(),
+        )
+    }
+}
+impl Inode {
+    fn new(data: &[u8]) -> Option<Self> {
+        let i_mode = u16::from_le_bytes(data[0..2].try_into().unwrap());
+
+        // Validate fields
+        if i_mode == 0 {
+            return None; // Return None if the inode is unused
+        }
+
+        let i_uid = u16::from_le_bytes(data[2..4].try_into().unwrap());
+        let i_size = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        let i_atime = u32::from_le_bytes(data[8..12].try_into().unwrap());
+        let i_ctime = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        let i_mtime = u32::from_le_bytes(data[16..20].try_into().unwrap());
+        let i_dtime = u32::from_le_bytes(data[20..24].try_into().unwrap());
+        let i_gid = u16::from_le_bytes(data[24..26].try_into().unwrap());
+        let i_links_count = u16::from_le_bytes(data[26..28].try_into().unwrap());
+        let i_blocks = u32::from_le_bytes(data[28..32].try_into().unwrap());
+        let i_flags = u32::from_le_bytes(data[32..36].try_into().unwrap());
+        let i_osd1 = u32::from_le_bytes(data[36..40].try_into().unwrap());
+        let i_block: [u32; 15] = data[40..100]
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        let i_generation = u32::from_le_bytes(data[100..104].try_into().unwrap());
+        let i_file_acl = u32::from_le_bytes(data[104..108].try_into().unwrap());
+        let i_dir_acl = u32::from_le_bytes(data[108..112].try_into().unwrap());
+        let i_faddr = u32::from_le_bytes(data[112..116].try_into().unwrap());
+        let i_osd2: [u8; 12] = data[116..128].try_into().unwrap();
+
+        Some(Inode {
+            i_mode,
+            i_uid,
+            i_size,
+            i_atime,
+            i_ctime,
+            i_mtime,
+            i_dtime,
+            i_gid,
+            i_links_count,
+            i_blocks,
+            i_flags,
+            i_osd1,
+            i_block,
+            i_generation,
+            i_file_acl,
+            i_dir_acl,
+            i_faddr,
+            i_osd2,
+        })
+    }
+
+    fn i_mode(&self) -> u16 { self.i_mode}
+    fn i_uid(&self) -> u16 { self.i_uid}
+    fn i_size(&self) -> u32 { self.i_size}
+    fn i_atime(&self) -> u32 { self.i_atime}
+    fn i_ctime(&self) -> u32 { self.i_ctime}
+    fn i_mtime(&self) -> u32 { self.i_mtime}
+    fn i_dtime(&self) -> u32 { self.i_dtime}
+    fn i_gid(&self) -> u16 { self.i_gid}
+    fn i_links_count(&self) -> u16 { self.i_links_count}
+    fn i_blocks(&self) -> u32 { self.i_blocks}
+    fn i_flags(&self) -> u32 { self.i_flags}
+    fn i_osd1(&self) -> u32 { self.i_osd1}
+    fn i_block(&self) -> [u32; 15] { self.i_block}
+    fn i_generation(&self) -> u32 { self.i_generation}
+    fn i_file_acl(&self) -> u32 { self.i_file_acl}
+    fn i_dir_acl(&self) -> u32 { self.i_dir_acl}
+    fn i_faddr(&self) -> u32 { self.i_faddr}
+    fn i_osd2(&self) -> [u8; 12] { self.i_osd2}
+
+    fn print_parsed_info(&self) {
+        println!("\x1b[32mParsed Inode Information:\x1b[0m");
+        println!("Mode: {:#o}", self.i_mode());
+        println!("User ID (UID): {}", self.i_uid());
+        println!("File Size: {} bytes", self.i_size());
+        println!("Access Time: {}", self.i_atime());
+        println!("Creation Time: {}", self.i_ctime());
+        println!("Modification Time: {}", self.i_mtime());
+        println!("Deletion Time: {}", self.i_dtime());
+        println!("Group ID (GID): {}", self.i_gid());
+        println!("Hard Link Count: {}", self.i_links_count());
+        println!("Blocks Allocated: {}", self.i_blocks());
+        println!("Flags: {:#x}", self.i_flags());
+        println!("OSD1: {:#x}", self.i_osd1());
+        println!("Block Pointers: {:?}", self.i_block());
+        println!("Generation (Version): {}", self.i_generation());
+        println!("File ACL: {:#x}", self.i_file_acl());
+        println!("Directory ACL: {:#x}", self.i_dir_acl());
+        println!("Fragment Address: {:#x}", self.i_faddr());
+        println!("OSD2: {:?}", self.i_osd2());
+    }
+    pub fn get_all_info(&self, inode_number: usize) -> String {
+        format!(
+            "Inode Information:\n\
+            Inode Number: {} \n\
+            File Mode: {:o}\n\
+            User ID (UID): {}\n\
+            File Size: {} bytes\n\
+            Access Time: {}\n\
+            Creation Time: {}\n\
+            Modification Time: {}\n\
+            Deletion Time: {}\n\
+            Group ID (GID): {}\n\
+            Hard Link Count: {}\n\
+            Blocks Allocated: {}\n\
+            File Flags: {:x}\n\
+            OS-Dependent Value: {}\n\
+            Block Pointers: {:?}\n\
+            File Generation: {}\n\
+            File ACL: {}\n\
+            Directory ACL: {}\n\
+            Fragment Address: {}\n\
+            OS-Dependent Value: {:?}\n\
+            \n\n\n",
+            inode_number,
+            self.i_mode(),
+            self.i_uid(),
+            self.i_size(),
+            self.i_atime(),
+            self.i_ctime(),
+            self.i_mtime(),
+            self.i_dtime(),
+            self.i_gid(),
+            self.i_links_count(),
+            self.i_blocks(),
+            self.i_flags(),
+            self.i_osd1(),
+            self.i_block(),
+            self.i_generation(),
+            self.i_file_acl(),
+            self.i_dir_acl(),
+            self.i_faddr(),
+            self.i_osd2(),
+        )
+    }
+
 }
 
 impl Ext2FS {
@@ -263,16 +471,98 @@ impl Ext2FS {
         // green text: "\x1b[32m ... \x1b[0m"
         println!("\x1b[32mData Blocks Offsets length: \x1b[0m{}", data_blocks_offsets.len());
 
+        // Save Inode Table
+        let mut inode_table: Vec<Inode> = vec![];
+        // Read the Inode Table
+        for (_, descriptor) in block_group_descriptors.iter().enumerate() {
+            let inode_table_offset = descriptor.bg_inode_table() * superblock.block_size();
 
+            // Iterate through each inode in the inode table
+            for inode_index in 0..superblock.inodes_per_group() {
+                // Inode Structure - 128 bytes
+                let inode_offset = inode_table_offset + inode_index * 128;
+                // Buffer for a single inode
+                let mut buffer = [0u8; 128];
+                _device.seek(SeekFrom::Start(inode_offset as u64))?;
+                _device.read_exact(&mut buffer)?;
+
+                if let Some(inode) = Inode::new(&buffer) {
+                    inode_table.push(inode);
+                }
+            }
+        }
+
+        println!("inode table len: {}", inode_table.len());
+
+        for (_, inode) in inode_table.iter().enumerate() {
+            inode.print_parsed_info();
+        }
 
         Ok(
             Ext2FS {
                 super_block: superblock,
                 block_group_descriptors,
+                inode_table,
                 block_bitmaps,
                 data_blocks_offsets
             }
         )
+    }
+
+    /// Creates the debug_os_info folder and generates the .txt files
+    pub fn create_debug_os_info(&self) -> io::Result<()> {
+        // Create debug_os_info directory if it doesn't exist
+        let folder_path = "debug_os_info";
+
+        // Check if the folder exists
+        if fs::metadata(folder_path).is_ok() {
+            // Remove the folder and its contents
+            fs::remove_dir_all(folder_path)?;
+        }
+
+        fs::create_dir(&folder_path)?;
+
+        // superblock_info
+
+        // Create a .txt file in the folder and write data to it
+        let file_path = format!("{}/superblock_info.txt", folder_path);
+        let mut file = File::create(&file_path)?;
+
+        // Write data to the file
+        file.write_all(self.super_block.get_all_info().as_bytes())?;
+
+
+
+        // block_group_descriptors_info
+
+        // Create a .txt file in the folder and write data to it
+        let file_path = format!("{}/block_group_descriptors_info.txt", folder_path);
+        // Open the file in append mode, creating it if it doesn't exist
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)?;
+        for (i, descriptor) in self.block_group_descriptors.iter().enumerate() {
+            let info = descriptor.get_all_info(i); // Get the descriptor information
+            file.write_all(info.as_bytes())?;      // Write to the file
+        }
+
+
+        // inode_table_info
+
+        // Create a .txt file in the folder and write data to it
+        let file_path = format!("{}/inode_table_info.txt", folder_path);
+        // Open the file in append mode, creating it if it doesn't exist
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)?;
+        for (i, inode) in self.inode_table.iter().enumerate() {
+            let info = inode.get_all_info(i); // Get the descriptor information
+            file.write_all(info.as_bytes())?;      // Write to the file
+        }
+
+        Ok(())
     }
 }
 

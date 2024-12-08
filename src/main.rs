@@ -10,6 +10,7 @@ fn recover_files(mut _device: fs::File, _path: &str) -> io::Result<()> {
 	// read superblock, BlockGroupDescriptor, some usefully data
 	let ext2_fs = ext2::Ext2FS::new(_device.try_clone()?)?;
 
+	ext2_fs.create_debug_os_info()?;
 	// iterate over unused blocks
 	let block_iter = ext2::BlockIter::new(&ext2_fs);
 
@@ -47,6 +48,7 @@ fn recover_files(mut _device: fs::File, _path: &str) -> io::Result<()> {
 			println!("JPEG Start found in Block Group {}, Block {}", group_number, block_number);
 		} else if let Some(pos) = block_data.windows(2).position(|w| w == [0xFF, 0xD9]) {
 			// Found JPEG End
+			println!("JPEG End found in Block Group {}, Block {}", group_number, block_number);
 			// Check if we hat some data before
 			if let Some(ref mut jpeg_data) = current_jpeg {
 				// Add the block up to EOI
@@ -75,8 +77,18 @@ fn recover_files(mut _device: fs::File, _path: &str) -> io::Result<()> {
 
 fn main() -> io::Result<()> {
 	use std::env::args;
-	let device_path = args().nth(1).unwrap_or("examples/medium.img".to_string());
-	let target_path = args().nth(2).unwrap_or("restored".to_string());
+	// Collect command-line arguments
+	let args: Vec<String> = args().collect();
+
+	// Check if the required arguments are passed
+	if args.len() < 3 {
+		// Red text: "\x1b[31m ...  \x1b[0m"
+		eprintln!("\x1b[31mUsage: {} <input_file> <output_file>\x1b[0m", args[0]);
+		std::process::exit(1);
+	}
+
+	let device_path = args[1].to_string();
+	let target_path = args[2].to_string();
 
 	fs::create_dir_all(&target_path)?;
 	recover_files(fs::File::open(&device_path)?, &target_path)
